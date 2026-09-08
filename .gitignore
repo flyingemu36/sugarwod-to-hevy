@@ -1,0 +1,42 @@
+# --- Rust ---
+/rust/target/
+**/*.rs.bk
+
+# --- Node / CDK ---
+node_modules/
+cdk.out/
+*.tsbuildinfo
+
+# --- CDK context & local overrides ---
+# cdk.context.json can cache account IDs / AZs pulled from your AWS account — keep it out.
+cdk.context.json
+
+# --- Env / secrets (belt-and-suspenders; none should exist, but never commit these) ---
+.env
+.env.*
+*.pem
+*.key
+
+# --- Editor / OS ---
+.DS_Store
+.idea/
+*.swp
+# VS Code: keep shareable settings, ignore local ones
+.vscode/*
+!.vscode/settings.json
+!.vscode/extensions.json
+!.vscode/launch.json
+
+# --- Logs ---
+*.log
+
+# --- Operator-local notes (NEVER commit) ---
+# These describe one specific live deployment: AWS account id, Lambda physical
+# names, real Hevy routine ids, dashboard URLs, local filesystem paths. They are
+# genuinely useful to keep on disk while operating the thing — they are just not
+# publishable, and being listed here is what stops a `git add -A` from shipping
+# them. Anything you write that names a real account, resource, or person
+# belongs in one of these, not in docs/.
+CONTEXT.md
+docs/triage-runbook.md
+docs/specs/

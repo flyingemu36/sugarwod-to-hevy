@@ -1,0 +1,35 @@
+name: Feature request
+description: Suggest a capability or an improvement
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What problem does this solve?
+      description: >
+        Describe the situation you hit, not just the feature you have in mind. Concrete cases
+        make it much easier to find a solution that fits how the rest of the system works.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would you like it to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives you considered
+      description: Including "configure it manually" or "handle it outside the pipeline".
+    validations:
+      required: false
+
+  - type: markdown
+    attributes:
+      value: |
+        **Note on scope:** this is a single-tenant personal utility — one deployment, one gym, one
+        Hevy account, one run a day. Features that fit that shape are welcome. Multi-user support,
+        a hosted service, or a web UI are outside what this is trying to be.

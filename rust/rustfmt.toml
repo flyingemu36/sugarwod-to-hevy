@@ -1,0 +1,5 @@
+# Stable rustfmt options only — CI runs `cargo fmt --check` on stable, so anything
+# nightly-gated here would silently no-op locally and fail nobody's build.
+edition = "2021"
+max_width = 100
+newline_style = "Unix"

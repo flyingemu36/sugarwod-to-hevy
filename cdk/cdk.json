@@ -1,0 +1,49 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/sugarwod_to_hevy.ts",
+  "watch": {
+    "include": ["**"],
+    "exclude": [
+      "README.md",
+      "cdk*.json",
+      "**/*.d.ts",
+      "**/*.js",
+      "tsconfig.json",
+      "package*.json",
+      "node_modules",
+      "cdk.out"
+    ]
+  },
+  "context": {
+    "//": "--- SugarWOD to Hevy deployment config (see lib/config.ts) ---",
+    "//affiliateId": "REQUIRED, no default. Your gym's SugarWOD affiliate slug. Pass it as `cdk deploy -c affiliateId=<slug>`, or put it in cdk.context.json (gitignored) so you don't retype it. It is deliberately absent from this committed file: a default here would sync someone else's workouts into your Hevy account.",
+    "//resourcePrefix": "Optional. Prefixes every physical resource name (default: SugarwodToHevy). Change it to run two independent deployments in one AWS account.",
+    "//timezone": "Optional IANA zone (default: America/Los_Angeles). Drives both the schedule and the Lambda's notion of 'today' — change this if you don't train on the US west coast.",
+    "//discordEnabled": "Optional, default false. Post a run summary to Discord. Off by default because notifications are a convenience, not part of syncing — enabling them by default would make every deployment either warn on every run or need an SSM parameter created before it works. When false the Lambda is not given the webhook parameter name and its role is not granted ssm:GetParameter.",
+    "//hevySecretId": "Optional. Secrets Manager id holding {\"api_key\": \"...\"} (default: <slug>/hevy-api-key).",
+    "//syncWodCron": "Optional (default: cron(30 3 * * ? *) — 3:30 AM local, daily).",
+    "//refreshCatalogCron": "Optional (default: cron(0 3 ? * SUN *)).",
+    "//refreshMaxesRate": "Optional (default: rate(2 days)).",
+
+    "@aws-cdk/aws-lambda:recognizeLayerVersion": true,
+    "@aws-cdk/core:checkSecretUsage": true,
+    "@aws-cdk/core:target-partitions": ["aws", "aws-cn"],
+    "@aws-cdk-containers/ecs-service-extensions:enableDefaultLogDriver": true,
+    "@aws-cdk/aws-ec2:uniqueImdsv2TemplateName": true,
+    "@aws-cdk/aws-ecs:arnFormatIncludesClusterName": true,
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:validateSnapshotRemovalPolicy": true,
+    "@aws-cdk/aws-codepipeline:crossAccountKeyAliasStackSafeResourceName": true,
+    "@aws-cdk/aws-s3:createDefaultLoggingPolicy": true,
+    "@aws-cdk/aws-sns-subscriptions:restrictSqsDescryption": true,
+    "@aws-cdk/aws-apigateway:disableCloudWatchRole": true,
+    "@aws-cdk/core:enablePartitionLiterals": true,
+    "@aws-cdk/aws-events:eventsTargetQueueSameAccount": true,
+    "@aws-cdk/aws-iam:standardizedServicePrincipals": true,
+    "@aws-cdk/aws-ecs:disableExplicitDeploymentControllerForCircuitBreaker": true,
+    "@aws-cdk/aws-iam:importedRoleStackSafeDefaultPolicyName": true,
+    "@aws-cdk/aws-s3:serverAccessLogsUseBucketPolicy": true,
+    "@aws-cdk/aws-lambda:useLatestRuntimeVersion": true,
+    "@aws-cdk/aws-dynamodb:resourcePolicyPerReplica": true,
+    "@aws-cdk/aws-ec2:ec2SumTImeoutEnabled": true
+  }
+}

@@ -1,0 +1,67 @@
+name: Bug report
+description: Something synced wrong, or did not sync at all
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The single most useful thing you can provide is the **raw WOD description text**. It is
+        the input to every stage of the pipeline, so with it a fix is usually quick — without it,
+        it is guesswork.
+
+  - type: textarea
+    id: wod-text
+    attributes:
+      label: Raw WOD description
+      description: >
+        Copy it verbatim — newlines, typos, odd spacing and all. Those details are frequently the
+        cause. You can pull the exact text the Lambda saw with:
+        `curl -s "https://app.sugarwod.com/public/api/v1/affiliates/<slug>/workouts/<YYYYMMDD>?jsonp=SugarWOD.workoutsFetched&tracks=%5B%22workout-of-the-day%22%5D"`
+      render: text
+      placeholder: |
+        35:00 EMOM
+        Minute 1: DB Reverse Lunges
+        Minute 2: Air Squat
+    validations:
+      required: true
+
+  - type: dropdown
+    id: symptom
+    attributes:
+      label: What went wrong
+      options:
+        - A movement is missing from the routine
+        - Rounds or sets are wrong (e.g. 1 set instead of N)
+        - Junk "exercises" appeared that are not movements
+        - Weights are wrong or missing
+        - The whole run failed / nothing synced
+        - Something else
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: Expected vs actual
+      description: What should the routine have contained, and what did it actually contain?
+    validations:
+      required: true
+
+  - type: textarea
+    id: summary
+    attributes:
+      label: Discord summary or CloudWatch log output
+      description: >
+        The summary text the run posted, if you have it. It reports unmapped movements and
+        missing maxes directly. Redact anything you would rather not share.
+      render: text
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: Commit
+      description: Which commit is deployed (`git rev-parse --short HEAD`)?
+    validations:
+      required: false

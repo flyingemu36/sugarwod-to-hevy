@@ -1,0 +1,39 @@
+{
+  "name": "@erahimi/sugarwod-to-hevy-cdk",
+  "version": "0.1.0",
+  "description": "AWS CDK app that provisions the SugarWOD to Hevy sync pipeline.",
+  "license": "AGPL-3.0-or-later",
+  "author": "Eamun Rahimi <eamun@eamunrahimi.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/flyingemu36/sugarwod-to-hevy.git",
+    "directory": "cdk"
+  },
+  "bugs": "https://github.com/flyingemu36/sugarwod-to-hevy/issues",
+  "homepage": "https://github.com/flyingemu36/sugarwod-to-hevy#readme",
+  "//": "private: this is a deployment app, never an npm package. Guards against an accidental `npm publish`.",
+  "private": true,
+  "bin": {
+    "sugarwod_to_hevy": "bin/sugarwod_to_hevy.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "watch": "tsc -w",
+    "cdk": "cdk",
+    "seed-aliases": "ts-node scripts/seed-aliases.ts",
+    "integration-test": "bash scripts/run-integration-tests.sh"
+  },
+  "devDependencies": {
+    "@types/node": "22.7.9",
+    "aws-cdk": "^2.268.0",
+    "ts-node": "^10.9.2",
+    "typescript": "5.9.3"
+  },
+  "dependencies": {
+    "@aws-sdk/client-dynamodb": "^3.840.0",
+    "@aws-sdk/util-dynamodb": "^3.840.0",
+    "aws-cdk-lib": "^2.268.0",
+    "cargo-lambda-cdk": "^0.0.36",
+    "constructs": "^10.0.0"
+  }
+}

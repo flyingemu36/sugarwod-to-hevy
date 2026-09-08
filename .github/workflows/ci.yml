@@ -1,0 +1,95 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+# No AWS credentials are used anywhere in this workflow. `cdk synth` runs entirely offline
+# against a placeholder affiliate id.
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  rust:
+    name: Rust (fmt, clippy, test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: rust
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal --component rustfmt,clippy
+          rustup default stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - run: cargo fmt --check
+
+      - run: cargo clippy --workspace --all-targets -- -D warnings
+
+      # Unit tests only. The `--ignored` integration tests need a deployed gamma stack, live AWS
+      # credentials, and hit the real SugarWOD/Hevy APIs — they are a local/manual gate, not a CI
+      # one, and would make CI fail on someone else's outage.
+      - run: cargo test --workspace
+
+  cdk:
+    name: CDK (typecheck, synth)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: cdk
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: cdk/package-lock.json
+
+      - name: Install stable toolchain
+        run: |
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+
+      # `cargo-lambda-cdk`'s RustFunction compiles the Lambda binaries during synth, so the
+      # toolchain above and this are both prerequisites for `cdk synth` to succeed.
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: rust
+
+      - name: Install cargo-lambda
+        uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-lambda
+
+      - run: npm ci
+
+      - run: npx tsc --noEmit
+
+      # Doubles as a regression test for the required-config gate: synth must fail without
+      # `affiliateId` and succeed with it.
+      - name: Synth fails without required config
+        run: |
+          if npx cdk synth --all > /dev/null 2>&1; then
+            echo "::error::cdk synth succeeded without affiliateId — the required-config gate is broken"
+            exit 1
+          fi
+          echo "OK: synth correctly refuses to run without affiliateId"
+
+      - name: Synth succeeds with required config
+        run: npx cdk synth --all -c affiliateId=example > /dev/null

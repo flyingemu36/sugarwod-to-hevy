@@ -1,0 +1,31 @@
+name: License compatibility
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    paths:
+      - 'rust/Cargo.toml'
+      - 'rust/Cargo.lock'
+      - 'rust/crates/*/Cargo.toml'
+      - 'rust/deny.toml'
+      - '.github/workflows/license.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  licenses:
+    name: cargo-deny (licenses)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # This project is AGPL-3.0-or-later. AGPL is incompatible with a handful of otherwise
+      # common licenses, so a new dependency carrying one would quietly make the project
+      # undistributable. Failing here is much cheaper than finding out later.
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          manifest-path: rust/Cargo.toml
+          command: check licenses

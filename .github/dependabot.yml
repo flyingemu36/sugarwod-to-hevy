@@ -1,0 +1,30 @@
+version: 2
+updates:
+  - package-ecosystem: cargo
+    directory: /rust
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      # The aws-sdk-* and aws-config crates release in lockstep and are pinned to "1" here, so
+      # bumping them one PR at a time is pure noise.
+      aws-sdk:
+        patterns:
+          - "aws-*"
+
+  - package-ecosystem: npm
+    directory: /cdk
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      aws-cdk:
+        patterns:
+          - "aws-cdk*"
+          - "@aws-sdk/*"
+          - "constructs"
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: monthly
