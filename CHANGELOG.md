@@ -22,7 +22,16 @@ release is the work of making it something other people can read, verify, and de
 - CI (GitHub Actions): `cargo fmt`/`clippy -D warnings`/`test`, `tsc --noEmit`, and `cdk synth`
   both with and without required config, so the config gate itself is regression-tested.
 - `cargo-deny` license gate, guarding AGPL compatibility of the dependency tree.
+- CI cross-compiles the Lambdas for `aarch64` during `cdk synth`, so a change that builds on an
+  x86_64 developer machine but not for the deployed architecture fails in CI rather than at
+  deploy time. Requires Zig, which the workflow installs explicitly.
 - `CONTRIBUTING.md`, `SECURITY.md`, `CODE_OF_CONDUCT.md`, issue and PR templates, Dependabot.
+
+### Requirements
+
+- **Node.js 26+** for the CDK app. Node 20 reached end-of-life on 2026-04-30 and Node 18 in
+  April 2025; `@types/node` tracks the runtime so `tsc` cannot bless APIs that are absent at
+  execution time. The Rust workspace builds on stable.
 
 ### Changed
 
