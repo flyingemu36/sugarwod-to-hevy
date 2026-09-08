@@ -20,7 +20,7 @@ jobs:
     name: cargo-deny (licenses)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # This project is AGPL-3.0-or-later. AGPL is incompatible with a handful of otherwise
       # common licenses, so a new dependency carrying one would quietly make the project

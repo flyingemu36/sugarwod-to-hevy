@@ -64,7 +64,7 @@ Secrets are **never** in code or CloudFormation:
 
 - Rust (stable) with the [`cargo-lambda`](https://www.cargo-lambda.info/) toolchain, or Docker
   bundling for `aws-lambda-rust`.
-- Node.js 18+ and the AWS CDK v2 CLI (`npm i -g aws-cdk`).
+- Node.js 26+ and the AWS CDK v2 CLI (`npm i -g aws-cdk`).
 - An AWS account with credentials configured, and CDK bootstrapped (`cdk bootstrap`).
 - A [Hevy Pro](https://www.hevyapp.com/) account (the API is Pro-only) and its API key.
 - A gym that posts its WOD to SugarWOD, and its **affiliate slug** — the path segment in your

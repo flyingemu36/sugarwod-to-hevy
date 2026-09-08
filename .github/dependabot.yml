@@ -23,6 +23,16 @@ updates:
           - "aws-cdk*"
           - "@aws-sdk/*"
           - "constructs"
+    ignore:
+      # @types/node must track the Node runtime this actually runs on, not the newest release.
+      # A types major ahead of the runtime makes tsc accept APIs that do not exist at execution
+      # time. Bump this deliberately, together with node-version in ci.yml and the README.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
+      # TypeScript majors are adopted on purpose, not on a schedule — 7.x is the native rewrite,
+      # and aws-cdk-lib's declaration surface is large enough that it warrants its own change.
+      - dependency-name: "typescript"
+        update-types: ["version-update:semver-major"]
 
   - package-ecosystem: github-actions
     directory: /
