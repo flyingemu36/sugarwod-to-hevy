@@ -24,7 +24,7 @@
     "integration-test": "bash scripts/run-integration-tests.sh"
   },
   "devDependencies": {
-    "@types/node": "22.7.9",
+    "@types/node": "26.4.1",
     "aws-cdk": "^2.268.0",
     "ts-node": "^10.9.2",
     "typescript": "5.9.3"
