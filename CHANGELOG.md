@@ -48,8 +48,8 @@ release is the work of making it something other people can read, verify, and de
   CloudWatch dashboard, the alarm, and the SSM parameter path. Deploying alongside anything else
   using those names would have collided with, or `RETAIN`-orphaned, unrelated resources.
 - `date::today_pacific_yyyymmdd()` → `date::today_yyyymmdd_in(tz)`, driven by `LOCAL_TIMEZONE`.
-- The Hevy secret id moved from the hardcoded `prod/hevy/api_key` to configurable
-  `hevySecretId`, defaulting to `sugarwod-to-hevy/hevy-api-key`.
+- The Hevy secret id is configurable via `hevySecretId`, defaulting to
+  `sugarwod-to-hevy/hevy-api-key`, rather than a hardcoded constant.
 - The Discord webhook parameter path is now uniform across stages:
   `/<slug>/<stage>/discord-webhook-url` (prod previously omitted the stage segment).
 - `seed-aliases` now requires both table names explicitly instead of defaulting to bare names.

@@ -217,13 +217,22 @@ static WATERFALL_KEYWORD_RE: LazyLock<Regex> =
 
 static DISTANCE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^(\d+)\s*m\s*(?:\(\d+ft\))?\s+(.+)").unwrap());
-// Check for distance before the amount (e.g. "Run 200 m")
-static DISTANCE_SUFFIX_RE: LazyLock<Regex> =
-    LazyLock::new(|| Regex::new(r"(?i)^(.+?)\s+(\d+)\s*m\s*(?:\(\d+ft\))?\s*$").unwrap());
+/// Distance *after* the movement (e.g. "Run 200 m"). Accepts the unit written as "m", "m.",
+/// "meter" or "meters" — coaches use all four, and an unmatched spelling leaves the number glued
+/// to the name, which resolves to nothing.
+static DISTANCE_SUFFIX_RE: LazyLock<Regex> = LazyLock::new(|| {
+    Regex::new(r"(?i)^(.+?)\s+(\d+)\s*m(?:eters?)?\.?\s*(?:\(\d+ft\))?\s*$").unwrap()
+});
 static CAL_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^(\d+)\s*/\s*(\d+)\s+Cal\s+(.+)$").unwrap());
 /// A single-number (or rep-range) calorie target — "15 Cal Row", "10-15 Cal Row" — the men's/
 /// women's-split form is `CAL_RE`. Same decision: flat 60s/0km, calorie number unused.
+/// A calorie target written *after* the movement — "Bike 20/15 Cals", "Row 15 Cal". The leading
+/// forms are `CAL_RE` and `CAL_SINGLE_RE`; this is the same instruction with the words swapped,
+/// and it gets the same flat 60s treatment. Without it the target stays on the name ("bike 20 15
+/// cals") and the movement is dropped.
+static CAL_SUFFIX_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(?i)^(\D.*?)\s+\d+(?:\s*[/-]\s*\d+)?\s*Cals?\.?\s*$").unwrap());
 static CAL_SINGLE_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"(?i)^\d+(?:-\d+)?\s*Cal\s+(.+)$").unwrap());
 /// A leading rep range — "10-15 Burpees" (do 10-15 reps). The name is what follows; reps take the
@@ -601,6 +610,18 @@ fn parse_exercise_line(trimmed: &str) -> Option<ParsedExerciseLine> {
         });
     }
 
+    if let Some(caps) = CAL_SUFFIX_RE.captures(&text) {
+        // Trailing calorie target ("Bike 20/15 Cals") — same flat 60s/0km as the leading forms.
+        set.duration_seconds = Some(60);
+        set.distance_meters = Some(0);
+        return Some(ParsedExerciseLine {
+            name_text: caps[1].trim().to_string(),
+            sets: vec![set],
+            rpe_note,
+            rest_seconds_after: None,
+        });
+    }
+
     if let Some(caps) = REPS_PERCENT_RE.captures(&text) {
         set.reps = caps[1].parse().ok();
         set.percent_1rm = caps[3].parse::<f64>().ok().map(|p| p / 100.0);
@@ -782,9 +803,8 @@ fn extract_weight_annotation(line: &str) -> (String, Option<f64>) {
 mod tests {
     use super::*;
 
-    /// Parses a description into exercise lines. Thin wrapper over [`parse_description`] purely
-    /// to keep the test bodies short.
-    fn only(desc: &str) -> Vec<ParsedExerciseLine> {
+    /// Thin alias for [`parse_description`], purely to keep the test bodies short.
+    fn parse(desc: &str) -> Vec<ParsedExerciseLine> {
         parse_description(desc)
     }
 
@@ -820,8 +840,20 @@ mod tests {
                 "distance first with a feet conversion in brackets",
             ),
             ("Run 200 m", "Run", 200, "distance last"),
+            (
+                "Run 200 meters",
+                "Run",
+                200,
+                "distance last, unit spelled out",
+            ),
+            (
+                "Row 500 Meter",
+                "Row",
+                500,
+                "distance last, singular and capitalised",
+            ),
         ] {
-            let lines = only(desc);
+            let lines = parse(desc);
             assert_eq!(lines.len(), 1, "{spelling}: {desc:?} is one movement");
             assert_eq!(lines[0].name_text, name, "{spelling}: {desc:?}");
             assert_eq!(
@@ -863,7 +895,7 @@ mod tests {
                 "explicit round count",
             ),
         ] {
-            let lines = only(desc);
+            let lines = parse(desc);
             assert_eq!(
                 lines.len(),
                 1,
@@ -895,7 +927,7 @@ mod tests {
                 "clock-style \"B. MM:SS AMRAP\"",
             ),
         ] {
-            let lines = only(desc);
+            let lines = parse(desc);
             let got: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
             assert_eq!(got, names, "{spelling}: header must not become an exercise");
             assert!(
@@ -943,7 +975,7 @@ mod tests {
                 "\":SS\" hold duration",
             ),
         ] {
-            let lines = only(desc);
+            let lines = parse(desc);
             assert_eq!(lines.len(), 1, "{notation}: {desc:?}");
             assert_eq!(lines[0].name_text, name, "{notation}: {desc:?}");
             assert_eq!(lines[0].sets[0].reps, reps, "{notation}: reps for {desc:?}");
@@ -954,11 +986,35 @@ mod tests {
         }
     }
 
+    /// Calorie targets appear on either side of the movement: "15 Cal Row" and "Bike 20/15 Cals".
+    /// Both are a work target rather than reps, and Hevy has no calorie field, so both become the
+    /// same flat 60-second effort — and either way the number must come off the name, or nothing
+    /// resolves against the catalog.
+    #[test]
+    fn calorie_targets_reduce_to_a_bare_name_on_either_side() {
+        for (desc, name, spelling) in [
+            ("15 Cal Row", "Row", "leading, single number"),
+            ("10-15 Cal Row", "Row", "leading, rep range"),
+            ("12/9 Cal Row", "Row", "leading, split"),
+            ("Bike 20/15 Cals", "Bike", "trailing, split"),
+            ("Row 15 Cal", "Row", "trailing, single number"),
+        ] {
+            let lines = parse(desc);
+            assert_eq!(lines.len(), 1, "{spelling}: {desc:?}");
+            assert_eq!(lines[0].name_text, name, "{spelling}: {desc:?}");
+            assert_eq!(
+                lines[0].sets[0].duration_seconds,
+                Some(60),
+                "{spelling}: calorie targets are a flat 60s effort"
+            );
+        }
+    }
+
     #[test]
     fn dash_rep_series() {
         // A descending ladder written after the movement: six sets of 12, 10, 8, 6, 4, 2 reps.
         // Each number is its own set, so the set count comes from the series length.
-        let lines = only("Back Squat 12-10-8-6-4-2");
+        let lines = parse("Back Squat 12-10-8-6-4-2");
         assert_eq!(lines[0].name_text, "Back Squat");
         let reps: Vec<Option<i64>> = lines[0].sets.iter().map(|s| s.reps).collect();
         assert_eq!(
@@ -971,7 +1027,7 @@ mod tests {
     fn bare_rep_scheme_header_applies_to_next_bare_line() {
         // "21-15-9" is a classic CrossFit rep ladder written on its own line above the movement
         // it applies to. It is a header, not an exercise, and gives the following line 3 sets.
-        let lines = only("21-15-9\nPull-ups");
+        let lines = parse("21-15-9\nPull-ups");
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].name_text, "Pull-ups");
         let reps: Vec<Option<i64>> = lines[0].sets.iter().map(|s| s.reps).collect();
@@ -981,7 +1037,7 @@ mod tests {
     #[test]
     fn set_by_rep_notation() {
         // "5x5" is sets-by-reps: five sets of five, not one set of 25.
-        let lines = only("Bench Press 5x5");
+        let lines = parse("Bench Press 5x5");
         assert_eq!(lines[0].name_text, "Bench Press");
         assert_eq!(lines[0].sets.len(), 5);
         assert!(lines[0].sets.iter().all(|s| s.reps == Some(5)));
@@ -991,7 +1047,7 @@ mod tests {
     fn weight_annotation_extracted() {
         // "(95/65)" is a prescribed load in pounds, men's/women's. Take the first number as the
         // explicit weight; it overrides any percentage-of-max calculation later in the pipeline.
-        let lines = only("Back Squat (95/65)");
+        let lines = parse("Back Squat (95/65)");
         assert_eq!(lines[0].name_text, "Back Squat");
         assert_eq!(lines[0].sets[0].explicit_weight_lb, Some(95.0));
     }
@@ -1001,7 +1057,7 @@ mod tests {
         // RPE ("rate of perceived exertion") is how hard a set should feel, 1-10. It is a
         // judgement call, not a load, so it is preserved verbatim as a note for the athlete to
         // read rather than converted into a weight the parser would only be guessing at.
-        let lines = only("Back Squat 5x5 @ RPE 8");
+        let lines = parse("Back Squat 5x5 @ RPE 8");
         assert_eq!(lines[0].name_text, "Back Squat");
         assert_eq!(lines[0].rpe_note.as_deref(), Some("@ RPE 8"));
         assert_eq!(lines[0].sets.len(), 5);
@@ -1013,7 +1069,7 @@ mod tests {
         // the movement under it to 5 sets, and the "-Rest 2:00-" marker belongs to the movement
         // *before* it, not the one after — rest is something you do after finishing a block.
         let lines =
-            only("A.5:00 EMOM\n2 Push Press @ 65%\n-Rest 2:00-\n5:00 EMOM\n2 Push Jerks @ 65%");
+            parse("A.5:00 EMOM\n2 Push Press @ 65%\n-Rest 2:00-\n5:00 EMOM\n2 Push Jerks @ 65%");
         assert_eq!(lines.len(), 2);
 
         assert_eq!(lines[0].name_text, "Push Press");
@@ -1033,7 +1089,7 @@ mod tests {
         // A "waterfall" is a team format where athletes start staggered. It changes who is
         // working when, but not what any one athlete does, so it is treated as an AMRAP: the
         // header lines are noise and the movements get the estimated round count.
-        let lines = only("B. 3-Person Team Waterfall\n24:00 AMRAP\n12 Alt DB Hang Snatch");
+        let lines = parse("B. 3-Person Team Waterfall\n24:00 AMRAP\n12 Alt DB Hang Snatch");
         assert_eq!(lines.len(), 1);
         assert_eq!(lines[0].name_text, "Alt DB Hang Snatch");
         assert_eq!(lines[0].sets.len(), 3);
@@ -1045,7 +1101,7 @@ mod tests {
         // Calories on a machine are a work target, and Hevy has no calorie field. Rather than
         // mislabel them as reps, every calorie target becomes a flat 60-second effort — the
         // number is deliberately ignored, since 12 cal and 40 cal are both "row until done".
-        let lines = only("B. 3-Person Team Waterfall\n24:00 AMRAP\n12/9 Cal Row\n12/9 Cal  Bike");
+        let lines = parse("B. 3-Person Team Waterfall\n24:00 AMRAP\n12/9 Cal Row\n12/9 Cal  Bike");
         assert_eq!(lines.len(), 2);
         assert_eq!(lines[0].name_text, "Row");
         assert_eq!(lines[1].name_text, "Bike");
@@ -1062,7 +1118,7 @@ mod tests {
     fn order_by_gender() {
         // "12/9" is a men's/women's prescription, not a fraction or a range. Take the first
         // number; the athlete adjusts in Hevy if they want the other.
-        let lines = only("B. 3-Person Team Waterfall\n24:00 AMRAP\n12/9 Push-Ups");
+        let lines = parse("B. 3-Person Team Waterfall\n24:00 AMRAP\n12/9 Push-Ups");
         assert_eq!(lines[0].name_text, "Push-Ups");
         assert_eq!(lines[0].sets.len(), 3);
         assert!(lines[0].sets.iter().all(|s| s.reps == Some(12)));
@@ -1076,7 +1132,7 @@ mod tests {
         //   3. An embedded "12/9 Cal Row" reduces to "Row".
         //   4. Rounds = 35 minutes / 5 stations = 7 — not 35 (once per minute), and not 1
         //      (which is what you get if the header is ignored entirely).
-        let lines = only(EMOM_WITH_MINUTE_LABELS);
+        let lines = parse(EMOM_WITH_MINUTE_LABELS);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(
             names,
@@ -1099,7 +1155,7 @@ mod tests {
         //   - "* building to a ..." is a coaching note, not a movement.
         //   - "A. Every 2:30 x 4 Sets" sets the round count (4) for the movement under it.
         //   - "EMOM X 18" over its 3 stations = 6 rounds each.
-        let lines = only(EVERY_THEN_EMOM_WITH_MIN_LABELS);
+        let lines = parse(EVERY_THEN_EMOM_WITH_MIN_LABELS);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert!(names.contains(&"Alt Back Rack Reverse Lunges"));
         assert!(names.contains(&"DB Sumo Squat"));
@@ -1129,7 +1185,7 @@ mod tests {
     fn bare_n_rounds_header_replicates_following_movements() {
         // A bare "N Rounds" line is a header that applies to every movement under it, not a
         // movement itself. Each of the three gets 5 sets; the header emits nothing.
-        let lines = only("5 Rounds\n12 Deadlifts\n9 Hang Power Cleans\n6 Push Jerks");
+        let lines = parse("5 Rounds\n12 Deadlifts\n9 Hang Power Cleans\n6 Push Jerks");
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(names, vec!["Deadlifts", "Hang Power Cleans", "Push Jerks"]);
         assert!(
@@ -1145,7 +1201,7 @@ mod tests {
         // cycle length without being emitted: 35 minutes / 5 stations = 7 rounds for each of
         // the 4 real movements. Miss the Rest station and the division gives 8.
         let desc = "EMOM X 35\nMin 1- 20 Sit Ups\nMin 2- 75 Singles\nMin 3- 30 Plank Shoulder Taps\nMin 4- Max DB Snatch\nMin 5- Rest";
-        let lines = only(desc);
+        let lines = parse(desc);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(
             names,
@@ -1162,7 +1218,7 @@ mod tests {
     fn for_time_cap_header_is_noise_and_resets_prior_rounds_mode() {
         // "B.For Time - 12 Min Cap" is a section header, not an exercise, and it ends the
         // previous section's round mode so the next section starts clean.
-        let lines = only(
+        let lines = parse(
             "A. Every 1:30 x 8 Sets\n3 Hang Power Clean @ 75%\n\nB.For Time - 12 Min Cap\n5 Rounds\n12 Deadlifts",
         );
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
@@ -1178,7 +1234,7 @@ mod tests {
         // movement after them must NOT inherit the earlier "5 Rounds" — the round mode ends
         // with its block, so the finisher is a single set.
         let desc = "5 Rounds\n12 Deadlifts\n\nif done before optional: \n20/60 x Remaining time \nBike Effort";
-        let lines = only(desc);
+        let lines = parse(desc);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(names, vec!["Deadlifts", "Bike Effort"]);
         for junk in ["Rounds", "Remaining", "optional"] {
@@ -1199,7 +1255,7 @@ mod tests {
     fn gym_announcement_lines_are_not_exercises() {
         // Gyms post closure notices and class times through the same field as workouts. None of
         // it is a movement, so the whole input must yield nothing rather than junk exercises.
-        let lines = only("CLUB HOURS: 7A-7PM\nCLASS OFFERINGS 9AM & 4PM");
+        let lines = parse("CLUB HOURS: 7A-7PM\nCLASS OFFERINGS 9AM & 4PM");
         assert!(lines.is_empty());
     }
 
@@ -1209,7 +1265,7 @@ mod tests {
         // and "30/30 X 7 Rounds" (30s work / 30s rest, 7 times through) gives every station 7
         // sets — the rounds apply to each station, not split across them.
         let desc = "30/30 X 7 Rounds \n1. DB Pullover\n2. Medball V-Up\n3. Jump Rope\n4. DB Floor Press\n5. DB Curls";
-        let lines = only(desc);
+        let lines = parse(desc);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(
             names,
@@ -1231,7 +1287,7 @@ mod tests {
     fn workrest_rounds_header_applies_to_plain_movement_list() {
         // Same work/rest round count, but movements listed plainly (no "N." markers) — still 4
         // sets each, and the header itself is not emitted as an exercise.
-        let lines = only("40/20 x 4 Rounds\nRow\nWall Balls");
+        let lines = parse("40/20 x 4 Rounds\nRow\nWall Balls");
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(names, vec!["Row", "Wall Balls"]);
         assert!(lines.iter().all(|l| l.sets.len() == 4));
@@ -1240,7 +1296,7 @@ mod tests {
     #[test]
     fn decimal_leading_number_is_not_mistaken_for_a_list_marker() {
         // "1.5 Turkish Get-Up" must keep its "1.5" (a load/qualifier), not be split into "5 …".
-        let lines = only("1.5 Turkish Get-Up");
+        let lines = parse("1.5 Turkish Get-Up");
         assert_eq!(lines[0].name_text, "1.5 Turkish Get-Up");
     }
 
@@ -1248,7 +1304,7 @@ mod tests {
     fn skip_lines_produce_no_exercises() {
         // Preamble, prose, and equipment lists are not movements. Emitting any of them would put
         // a junk entry in the athlete's Hevy routine, so the whole input must yield nothing.
-        let lines = only("Hyrox SIM\nThis is the Hyrox Workout. You can do this solo, partner, relay, or half it all! Its your workout!\nA For Time:\nDumbbells: 2 x 50/35lb, 22.5/15kg");
+        let lines = parse("Hyrox SIM\nThis is the Hyrox Workout. You can do this solo, partner, relay, or half it all! Its your workout!\nA For Time:\nDumbbells: 2 x 50/35lb, 22.5/15kg");
         assert!(lines.is_empty());
     }
 
@@ -1258,7 +1314,7 @@ mod tests {
         // the repeated runs must each survive as their own line rather than being deduplicated
         // or collapsed, and the prose header must not leak in as an exercise.
         let desc = "Hyrox SIM\nThis is the Hyrox Workout. You can do this solo, partner, relay, or half it all! Its your workout!\n\n1000 m Run\n1000 m SKI\n1000 m Run\n50 m Sled push\n1000 m Run\n50 m Sled pull\n1000 m Run\n80 m Burpee Broad jumps\n1000 m run\n1000 m Row\n1000 m run\n200 m Farmer carry\n1000 m run\n100 m sandbag lunges\n1000 m run\n100 Wall balls";
-        let lines = only(desc);
+        let lines = parse(desc);
         // 9 "1000 m run/Run" lines + SKI + Sled push + Sled pull + Burpee Broad jumps + Row +
         // Farmer carry + sandbag lunges + Wall balls = 16 total exercise lines.
         assert_eq!(lines.len(), 16);
@@ -1270,7 +1326,7 @@ mod tests {
     fn emom_x_n_header_tolerates_trailing_min_unit() {
         // "EMOM X 35 MIN" must be recognized despite the trailing unit (5-station cycle -> 7).
         let desc = "EMOM X 35 MIN\nMin 1- 10 Push Up\nMin 2- 20 Sit Up\nMin 3- 50 Singles\nMin 4- 12 KBS\nMin 5- Rest";
-        let lines = only(desc);
+        let lines = parse(desc);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(names, vec!["Push Up", "Sit Up", "Singles", "KBS"]);
         assert!(
@@ -1285,7 +1341,7 @@ mod tests {
         // written without the space. Read as the decimal 2.20 instead, the line stops counting
         // as a station, the cycle collapses to 4, and the round count comes out wrong.
         let desc = "EMOM X 35 MIN\n1. 10 Push Up\n2.20 Banded Tricept Pull Down\n3. 50 Singles\n4. 12 AKBS\n5. Rest";
-        let lines = only(desc);
+        let lines = parse(desc);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(
             names,
@@ -1302,7 +1358,7 @@ mod tests {
     fn quoted_workout_name_is_not_an_exercise() {
         // Benchmark workouts have names, and coaches quote them ("Vaya Con Dios", "Fran").
         // A quoted line is a title, never a movement.
-        let lines = only("B. 20:00 AMRAP\n\"Vaya Con Dios\"\n2 Wall Walks\n16 Wall Balls");
+        let lines = parse("B. 20:00 AMRAP\n\"Vaya Con Dios\"\n2 Wall Walks\n16 Wall Balls");
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(names, vec!["Wall Walks", "Wall Balls"]);
     }
@@ -1312,7 +1368,7 @@ mod tests {
         // "A2. 10 Min to Complete" is a section header, and a bare "5/5 x 4 Sets @ 40%" prescription
         // line is dropped (not a junk exercise). The movement between them is kept.
         let lines =
-            only("A2. 10 Min to Complete\nBack Rack Bulgarian Split Squats\n5/5 x 4 Sets @ 40%");
+            parse("A2. 10 Min to Complete\nBack Rack Bulgarian Split Squats\n5/5 x 4 Sets @ 40%");
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(names, vec!["Back Rack Bulgarian Split Squats"]);
     }
@@ -1320,7 +1376,7 @@ mod tests {
     #[test]
     fn calorie_movement_without_split_resolves_name() {
         // "15 Cal Row" (no men's/women's split) -> "Row", flat 60s like other calorie targets.
-        let lines = only("15 Cal Row");
+        let lines = parse("15 Cal Row");
         assert_eq!(lines[0].name_text, "Row");
         assert_eq!(lines[0].sets[0].duration_seconds, Some(60));
     }
@@ -1331,7 +1387,7 @@ mod tests {
         // stations (4 visits each), not performed 12 times at each one. Also strips "Station N:"
         // labels and drops the "... visits per station" annotations, including the typo'd one.
         let desc = "Every 3:00 x 12 Sets Alternating Stations\n36:00 tota - 4 visits per station \nStation 1: 45/36 Cal Ski\nStation 2: 35/24 Cal Bike \nStation 3: 45/36 Cal Row\n(4 visits per station, 36:00 total)";
-        let lines = only(desc);
+        let lines = parse(desc);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(names, vec!["Ski", "Bike", "Row"]);
         assert!(
@@ -1345,7 +1401,7 @@ mod tests {
         // "A. EMOM X 18 Min" with alternating Odd/Even stations = a 2-station cycle -> 18 / 2 = 9
         // rounds. Leading "10-15" rep range stripped; "Cal Row" resolves to "Row".
         let desc = "A. EMOM X 18 Min\nOdd: 10-15 Burpees\nEven: 10-15 Cal Row";
-        let lines = only(desc);
+        let lines = parse(desc);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(names, vec!["Burpees", "Row"]);
         assert!(
@@ -1361,7 +1417,7 @@ mod tests {
         // a block header rather than a movement. Neither is an exercise; both movements under
         // them get 3 sets. ("@ 3030" is a tempo prescription and is not a movement either.)
         let desc = "A. 35 Min to Work \n3 sets of: \n8/leg KB split RDL @ 3030\n8/leg KB kickstand squats @ 3030";
-        let lines = only(desc);
+        let lines = parse(desc);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert_eq!(names, vec!["KB split RDL", "KB kickstand squats"]);
         assert!(
@@ -1375,7 +1431,7 @@ mod tests {
         // A rep scheme written on the line AFTER its movement, which is the opposite of the
         // usual order. It must attach backwards to the preceding movement rather than becoming
         // an exercise of its own, and the "B." section letter comes off the name.
-        let lines = only("B. Deadlift\n5-5-5-5-5");
+        let lines = parse("B. Deadlift\n5-5-5-5-5");
         assert_eq!(lines.len(), 1, "no junk scheme exercise");
         assert_eq!(lines[0].name_text, "Deadlift");
         let reps: Vec<Option<i64>> = lines[0].sets.iter().map(|s| s.reps).collect();
@@ -1388,7 +1444,7 @@ mod tests {
         // in the session". There is nothing to parse a duration from, so it still has to be
         // recognised as an AMRAP header and fall back to the round estimate.
         let desc = "C. AMRAP with time remaining\nBike 20/15 Cals\n30 Walking lunges";
-        let lines = only(desc);
+        let lines = parse(desc);
         let names: Vec<&str> = lines.iter().map(|l| l.name_text.as_str()).collect();
         assert!(
             !names.iter().any(|n| n.to_lowercase().contains("amrap")),
