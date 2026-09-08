@@ -3,13 +3,12 @@ name: License compatibility
 on:
   push:
     branches: [main]
+  # Deliberately unfiltered. This job's check is a *required* status check, and a required
+  # check that only runs on some paths never reports on the others — leaving those pull
+  # requests waiting forever for a result that will not arrive. `cargo deny check licenses`
+  # resolves manifests without compiling and takes about a second, so running it on every
+  # pull request costs nothing next to being unmergeable.
   pull_request:
-    paths:
-      - 'rust/Cargo.toml'
-      - 'rust/Cargo.lock'
-      - 'rust/crates/*/Cargo.toml'
-      - 'rust/deny.toml'
-      - '.github/workflows/license.yml'
   workflow_dispatch:
 
 permissions:
