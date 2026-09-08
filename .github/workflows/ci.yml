@@ -65,6 +65,14 @@ jobs:
         run: |
           rustup toolchain install stable --profile minimal
           rustup default stable
+          # ComputeStack requests ARM_64, so synth cross-compiles for aarch64 on an x86_64
+          # runner. Without the target, the Lambda build fails during `cdk synth`.
+          rustup target add aarch64-unknown-linux-gnu
+
+      # cargo-lambda uses Zig as its cross-linker. It offers to install Zig itself, but that
+      # path does not work headlessly — it reports "Zig installed" and then fails with
+      # "Failed to find zig: cannot find binary path". Install it explicitly instead.
+      - uses: mlugg/setup-zig@v2
 
       # `cargo-lambda-cdk`'s RustFunction compiles the Lambda binaries during synth, so the
       # toolchain above and this are both prerequisites for `cdk synth` to succeed.
