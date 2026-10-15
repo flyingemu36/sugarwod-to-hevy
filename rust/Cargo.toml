@@ -28,7 +28,7 @@ thiserror = "2"
 chrono = { version = "0.4", features = ["serde"] }
 chrono-tz = "0.10"
 regex = "1"
-lambda_runtime = "0.13"
+lambda_runtime = "1.4"
 aws-config = { version = "1", features = ["credentials-login"] }
 aws-sdk-dynamodb = "1"
 aws-sdk-secretsmanager = "1"
