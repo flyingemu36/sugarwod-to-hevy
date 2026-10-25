@@ -87,6 +87,11 @@ export class ComputeStack extends cdk.Stack {
       bundling: commonBundling,
       memorySize: 256,
       timeout: cdk.Duration.minutes(2),
+      // The scheduler invokes asynchronously, and Lambda's own async retry (default 2) is
+      // separate from the scheduler's retryPolicy. With it on, one deterministic failure ran
+      // three times and posted three identical failure messages to Discord (2026-10-15, 10-21).
+      // Transient failures are already retried inside the handler.
+      retryAttempts: 0,
       environment: {
         ...commonEnv,
         ALIAS_TABLE_NAME: props.exerciseAliasTable.tableName,

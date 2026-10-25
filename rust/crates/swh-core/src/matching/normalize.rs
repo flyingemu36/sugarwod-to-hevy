@@ -3,11 +3,18 @@
 
 /// Lowercase, trim, strip punctuation (keep alphanumerics and single spaces) — the shared key
 /// form used for `ExerciseAlias` PKs and `HevyExerciseCatalog.title_normalized`.
+///
+/// Apostrophes are dropped rather than turned into a space. Treated like other punctuation,
+/// "Devil's Press" normalized to "devil s press", which no coach's "Devils Press" could ever
+/// reach. `cdk/scripts/seed-aliases.ts` mirrors this function and must change with it.
 pub fn normalize(s: &str) -> String {
     let lower = s.to_lowercase();
     let mut out = String::with_capacity(lower.len());
     let mut last_was_space = false;
     for c in lower.chars() {
+        if c == '\'' || c == '\u{2019}' {
+            continue;
+        }
         if c.is_alphanumeric() {
             out.push(c);
             last_was_space = false;
@@ -45,6 +52,13 @@ mod tests {
         assert_eq!(normalize("Sled  push"), "sled push");
         assert_eq!(normalize("  Deadlift  "), "deadlift");
         assert_eq!(normalize("Squat (Barbell)"), "squat barbell");
+    }
+
+    #[test]
+    fn apostrophes_join_rather_than_split_a_word() {
+        assert_eq!(normalize("Devil's Press"), "devils press");
+        assert_eq!(normalize("Devil\u{2019}s Press"), "devils press");
+        assert_eq!(normalize("Devils Press"), "devils press");
     }
 
     #[test]

@@ -7,6 +7,41 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ## [Unreleased]
 
+### Fixed
+
+- **A separator line crashed the whole day's sync.** A WOD line of just `-` or `+` normalized to an
+  empty alias key, which DynamoDB rejects; the error aborted every track (2026-10-15, 10-21). Such
+  keys are now skipped without a lookup.
+- **Each failure was posted to Discord three times.** Lambda's own async retries are disabled on
+  `sync-wod`; one failing track no longer aborts the others; DynamoDB errors keep their full source
+  chain instead of reading "service error".
+- **Silent wrong output, reported as success:**
+  - lettered work/rest headers ("A. 30/30 X 5 rounds at same station") collapsed every station to
+    one set;
+  - loaded carries (`short_distance_weight`) never got a weight;
+  - a title shared by a built-in and a custom template resolved to either one at random, in both
+    `sync-wod` and the alias seed script;
+  - a logged-weight typo (161 kg DB Thruster) became the max — `refresh-maxes` now rejects outliers.
+- **Prescriptions the parser read as exercises** now apply to the movement they describe:
+  `Set N:` / `#N:` set lists, rep lines ("5 Reps @ 50%", "3 Reps 65-75%", "1+1+1 @ 60%"), timed
+  rest lines, round counts inside headers ("5 Rounds- 15 Min Cap", "For Time · 4 Rounds"),
+  sub-section labels ("A2.", "A 2.", "A ."), multi-minute EMOM stations ("Min 2 and 3-"), bare
+  "Station N" groups, " + " combos, feet distances, ":15/:15" holds and spelled-out "Calorie".
+- `normalize` drops apostrophes instead of splitting on them, so "Devils Press" reaches "Devil's
+  Press". Re-run `refresh-catalog` after deploying to rewrite the stored keys.
+
+### Added
+
+- Resolver: fuzzy candidates are also checked against the alias table; leading qualifiers
+  (`Alt`, `Max`, `Heavy`, `Strict`, `SA`) are dropped as a fallback; `walk` and `carry` are
+  interchangeable.
+- Hevy templates that cannot hold part of a prescription are reported in the summary instead of
+  silently dropping it.
+- `examples/replay_parse.rs` and `examples/replay_resolve.rs`: offline replay of saved SugarWOD
+  responses against read-only snapshots of the Prod tables, with `--seed` to preview dictionary
+  changes before seeding.
+- 60 new or corrected entries in `exercise-translation.json`.
+
 ## [0.1.0] — 2026-09-07
 
 Initial public release. The pipeline itself has been running privately as a daily driver; this

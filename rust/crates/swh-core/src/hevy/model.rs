@@ -43,8 +43,104 @@ impl ExerciseTemplate {
 
 /// Shared with `store::catalog_table`, which reconstructs this from a raw DynamoDB item rather
 /// than an `ExerciseTemplate` struct.
+///
+/// The type names here are the ones the live API actually returns. An earlier version tested for
+/// `"weight_distance"` and `"weight_duration"`, **neither of which Hevy emits** — the real
+/// loaded-carry type is `short_distance_weight`. Those two arms were therefore dead strings, and
+/// the consequence was silent: `Farmers Walk` is `short_distance_weight` and has a 45.4 kg entry
+/// in `PersonalMax`, but every synced farmer carry came out with no weight at all because this
+/// returned `false`. See `SUPPORTED_*` below for the full live type list.
 pub fn is_loaded_exercise_type(kind: &str) -> bool {
-    kind == "weight_reps" || kind == "weight_distance" || kind == "weight_duration"
+    matches!(
+        kind,
+        "weight_reps" | "short_distance_weight" | "bodyweight_weighted"
+    )
+}
+
+// Hevy exercise `type` values, and which set fields each one can actually hold. Taken from the
+// live catalog (632 templates) rather than the published spec, which has drifted before — see
+// the `equipment` note above. Counts at 2026-09-12:
+//
+//   weight_reps 430 | reps_only 131 | duration 26 | distance_duration 15
+//   short_distance_weight 13 | bodyweight_weighted 10 | bodyweight_assisted 5
+//   steps_duration 1 | floors_duration 1
+//
+// `bodyweight_assisted` is deliberately absent from `is_loaded_exercise_type`: its weight field
+// is *assistance* (how much load is taken off), so defaulting it to a percentage of the
+// athlete's max would prescribe the opposite of what was meant.
+
+/// Types whose sets carry a weight.
+const SUPPORTED_WEIGHT: &[&str] = &[
+    "weight_reps",
+    "short_distance_weight",
+    "bodyweight_weighted",
+    "bodyweight_assisted",
+];
+/// Types whose sets carry a rep count.
+const SUPPORTED_REPS: &[&str] = &[
+    "weight_reps",
+    "reps_only",
+    "bodyweight_weighted",
+    "bodyweight_assisted",
+];
+/// Types whose sets carry a distance.
+const SUPPORTED_DISTANCE: &[&str] = &["distance_duration", "short_distance_weight"];
+/// Types whose sets carry a duration.
+const SUPPORTED_DURATION: &[&str] = &[
+    "duration",
+    "distance_duration",
+    "steps_duration",
+    "floors_duration",
+];
+
+/// Which set fields a Hevy exercise `type` can hold. Hevy silently ignores a field its template
+/// type has no slot for, so a parsed prescription that lands on the wrong type disappears without
+/// an API error — "1000 m SKI" against the `duration`-typed `Skiing` template synced as an empty
+/// set. Used by `load_calc` to report those, instead of letting them vanish.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SupportedSetFields {
+    pub weight: bool,
+    pub reps: bool,
+    pub distance: bool,
+    pub duration: bool,
+}
+
+impl SupportedSetFields {
+    pub fn for_kind(kind: &str) -> Self {
+        Self {
+            weight: SUPPORTED_WEIGHT.contains(&kind),
+            reps: SUPPORTED_REPS.contains(&kind),
+            distance: SUPPORTED_DISTANCE.contains(&kind),
+            duration: SUPPORTED_DURATION.contains(&kind),
+        }
+    }
+
+    /// An unrecognized type (a new Hevy type, or an empty string from an older catalog row).
+    /// Everything reads as supported so a type we don't know about is passed through untouched
+    /// rather than having its prescription stripped on a guess.
+    fn permissive() -> Self {
+        Self {
+            weight: true,
+            reps: true,
+            distance: true,
+            duration: true,
+        }
+    }
+
+    /// Resolves a kind, falling back to permissive for anything not in the known list.
+    pub fn for_kind_or_permissive(kind: &str) -> Self {
+        let known = SUPPORTED_WEIGHT
+            .iter()
+            .chain(SUPPORTED_REPS)
+            .chain(SUPPORTED_DISTANCE)
+            .chain(SUPPORTED_DURATION)
+            .any(|k| *k == kind);
+        if known {
+            Self::for_kind(kind)
+        } else {
+            Self::permissive()
+        }
+    }
 }
 
 // ---- Exercise history (GET /v1/exercise_history/{exerciseTemplateId}) ----

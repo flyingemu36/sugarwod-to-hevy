@@ -30,6 +30,7 @@ use swh_core::store::alias_table::DynamoAliasStore;
 use swh_core::store::catalog_table::DynamoCatalogStore;
 use swh_core::store::personal_max::DynamoMaxStore;
 use swh_core::store::routine_map::{normalize_routine_key, RoutineMapStore};
+use swh_core::sugarwod::model::SugarWodWorkout;
 use swh_core::sugarwod::SugarWodClient;
 
 /// Posts `message` to the Discord webhook, if notifications are enabled.
@@ -72,9 +73,15 @@ async fn handler(_event: LambdaEvent<Value>) -> Result<Value, Error> {
     let http = reqwest::Client::new();
 
     match run_sync(&config, &http).await {
-        Ok(summary) => {
+        Ok((summary, 0)) => {
             notify(&ssm_client, &http, &summary).await;
             Ok(serde_json::json!({ "status": "ok", "summary": summary }))
+        }
+        Ok((summary, failed)) => {
+            // The summary already names each failed workout, so post it once and fail the
+            // invocation only to trip the sync-wod-errors alarm — not to post a second message.
+            notify(&ssm_client, &http, &summary).await;
+            Err(format!("{failed} workout(s) failed to sync:\n{summary}").into())
         }
         Err(e) => {
             let msg = build_failure_message("sync-wod", &e.to_string());
@@ -84,7 +91,13 @@ async fn handler(_event: LambdaEvent<Value>) -> Result<Value, Error> {
     }
 }
 
-async fn run_sync(config: &aws_config::SdkConfig, http: &reqwest::Client) -> Result<String, Error> {
+/// Syncs every workout of the day and returns the summary plus how many workouts failed. Setup
+/// failures (secrets, config, the SugarWOD fetch) still fail the whole run, since no workout can
+/// sync without them; a failure inside one workout is recorded in its outcome instead.
+async fn run_sync(
+    config: &aws_config::SdkConfig,
+    http: &reqwest::Client,
+) -> Result<(String, usize), Error> {
     let secrets_client = aws_sdk_secretsmanager::Client::new(config);
     let dynamo_client = aws_sdk_dynamodb::Client::new(config);
 
@@ -104,78 +117,102 @@ async fn run_sync(config: &aws_config::SdkConfig, http: &reqwest::Client) -> Res
     let response = sugarwod.fetch_workouts(&affiliate, &date).await?;
 
     let mut outcomes = Vec::new();
+    let mut failed = 0;
 
     for workout in &response.data {
-        let (matched, report) = build_routine_exercises(
-            &workout.description,
-            &workout.movements,
-            &aliases,
-            &catalog,
-            &maxes,
-        )
-        .await?;
-
-        let exercises = build_exercises(matched);
-        let exercise_count = exercises.len();
-
-        // Hevy rejects a routine with an empty `exercises` array (HTTP 400, "Array must contain
-        // at least 1 element(s)"). If nothing resolved — a rest-only day, or a WOD whose
-        // movements are all still unmapped — skip the Hevy write entirely and surface it in the
-        // summary, instead of letting a single empty routine hard-fail the whole run (the
-        // 2026-08-02 prod incident). Leave any existing RoutineMap/routine untouched.
-        if exercises.is_empty() {
-            outcomes.push(WorkoutOutcome {
-                title: workout.title.clone(),
-                exercise_count: 0,
-                unmapped: report.unmapped,
-                load_unknown: report.load_unknown,
-            });
-            continue;
+        match sync_workout(workout, &aliases, &catalog, &maxes, &routine_map, &hevy).await {
+            Ok(outcome) => outcomes.push(outcome),
+            Err(e) => {
+                tracing::error!(title = %workout.title, "workout sync failed: {e}");
+                failed += 1;
+                outcomes.push(WorkoutOutcome {
+                    title: workout.title.clone(),
+                    exercise_count: 0,
+                    unmapped: vec![],
+                    load_unknown: vec![],
+                    unsupported_fields: vec![],
+                    error: Some(e.to_string()),
+                });
+            }
         }
-
-        let notes = workout.description.replace("\\n", "\n");
-        let routine_key = normalize_routine_key(&workout.title);
-
-        let existing_id = routine_map.get_routine_id(&routine_key).await?;
-
-        let routine_id = match existing_id {
-            Some(id) => {
-                match hevy
-                    .update_routine(&id, &workout.title, &notes, exercises.clone())
-                    .await?
-                {
-                    Some(resp) => resp.id,
-                    None => {
-                        // Stored id 404'd (e.g. deleted manually in the Hevy app) — fall back
-                        // to creating a fresh routine and overwrite the stored mapping.
-                        let resp = hevy
-                            .create_routine(&workout.title, &notes, exercises)
-                            .await?;
-                        resp.id
-                    }
-                }
-            }
-            None => {
-                let resp = hevy
-                    .create_routine(&workout.title, &notes, exercises)
-                    .await?;
-                resp.id
-            }
-        };
-
-        routine_map
-            .upsert(&routine_key, &routine_id, &workout.title)
-            .await?;
-
-        outcomes.push(WorkoutOutcome {
-            title: workout.title.clone(),
-            exercise_count,
-            unmapped: report.unmapped,
-            load_unknown: report.load_unknown,
-        });
     }
 
-    Ok(build_summary_message(&outcomes))
+    Ok((build_summary_message(&outcomes), failed))
+}
+
+/// Resolves one workout and writes it to Hevy, creating or updating its routine.
+async fn sync_workout(
+    workout: &SugarWodWorkout,
+    aliases: &DynamoAliasStore,
+    catalog: &DynamoCatalogStore,
+    maxes: &DynamoMaxStore,
+    routine_map: &RoutineMapStore,
+    hevy: &HevyClient,
+) -> Result<WorkoutOutcome, Error> {
+    let (matched, report) = build_routine_exercises(
+        &workout.description,
+        &workout.movements,
+        aliases,
+        catalog,
+        maxes,
+    )
+    .await?;
+
+    let exercises = build_exercises(matched);
+    let exercise_count = exercises.len();
+    let outcome = |exercise_count| WorkoutOutcome {
+        title: workout.title.clone(),
+        exercise_count,
+        unmapped: report.unmapped,
+        load_unknown: report.load_unknown,
+        unsupported_fields: report.unsupported_fields,
+        error: None,
+    };
+
+    // Hevy rejects a routine with an empty `exercises` array (HTTP 400, "Array must contain
+    // at least 1 element(s)"). If nothing resolved — a rest-only day, or a WOD whose
+    // movements are all still unmapped — skip the Hevy write entirely and surface it in the
+    // summary, instead of letting a single empty routine hard-fail the whole run (the
+    // 2026-08-02 prod incident). Leave any existing RoutineMap/routine untouched.
+    if exercises.is_empty() {
+        return Ok(outcome(0));
+    }
+
+    let notes = workout.description.replace("\\n", "\n");
+    let routine_key = normalize_routine_key(&workout.title);
+
+    let existing_id = routine_map.get_routine_id(&routine_key).await?;
+
+    let routine_id = match existing_id {
+        Some(id) => {
+            match hevy
+                .update_routine(&id, &workout.title, &notes, exercises.clone())
+                .await?
+            {
+                Some(resp) => resp.id,
+                None => {
+                    // Stored id 404'd (e.g. deleted manually in the Hevy app) — fall back
+                    // to creating a fresh routine and overwrite the stored mapping.
+                    let resp = hevy
+                        .create_routine(&workout.title, &notes, exercises)
+                        .await?;
+                    resp.id
+                }
+            }
+        }
+        None => {
+            let resp = hevy
+                .create_routine(&workout.title, &notes, exercises)
+                .await?;
+            resp.id
+        }
+    };
+
+    routine_map
+        .upsert(&routine_key, &routine_id, &workout.title)
+        .await?;
+
+    Ok(outcome(exercise_count))
 }
 
 fn env_var(name: &str) -> Result<String, Error> {

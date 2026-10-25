@@ -31,4 +31,13 @@ pub enum SwhError {
     Http(#[from] reqwest::Error),
 }
 
+impl SwhError {
+    /// Wraps an AWS SDK DynamoDB error with its full source chain. The SDK error's own `Display`
+    /// is just "service error", which is all the 2026-10-15 / 10-21 failure reports said — the
+    /// `ValidationException` and its message only appear further down the chain.
+    pub fn dynamo(e: impl std::error::Error) -> Self {
+        SwhError::Dynamo(aws_sdk_dynamodb::error::DisplayErrorContext(e).to_string())
+    }
+}
+
 pub type Result<T> = std::result::Result<T, SwhError>;

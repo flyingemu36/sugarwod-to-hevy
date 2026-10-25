@@ -41,14 +41,17 @@ function requiredEnv(name: string): string {
 const catalogTableName = requiredEnv('CATALOG_TABLE_NAME');
 const aliasTableName = requiredEnv('ALIAS_TABLE_NAME');
 
-// Mirrors `swh_core::matching::normalize::normalize` exactly — lowercase, strip punctuation to
-// single spaces, trim. Both sides of this migration must use the same normalization or lookups
-// won't line up with what the Rust code computes at runtime.
+// Mirrors `swh_core::matching::normalize::normalize` exactly — lowercase, drop apostrophes,
+// strip other punctuation to single spaces, trim. Both sides of this migration must use the same
+// normalization or lookups won't line up with what the Rust code computes at runtime.
 function normalize(input: string): string {
   const lower = input.toLowerCase();
   let out = '';
   let lastWasSpace = false;
   for (const ch of lower) {
+    if (ch === "'" || ch === '\u2019') {
+      continue;
+    }
     if (/[a-z0-9]/.test(ch)) {
       out += ch;
       lastWasSpace = false;
@@ -60,20 +63,38 @@ function normalize(input: string): string {
   return out.trim();
 }
 
+/**
+ * Normalized title -> template id. Distinct Hevy titles can normalize to the same key ("Sled
+ * Push" and a custom "Sled push"), and the scan returns them in no useful order — so taking the
+ * last row seen let a custom reps-only "Sled push" win over the built-in, and every seeded sled
+ * push silently lost its distance. Pick the way `DynamoCatalogStore::find_by_normalized_title`
+ * does: built-in before custom, then lowest id.
+ */
 async function loadCatalogTitleIndex(client: DynamoDBClient): Promise<Map<string, string>> {
-  const index = new Map<string, string>();
+  const best = new Map<string, { id: string; isCustom: boolean }>();
   let lastEvaluatedKey: Record<string, any> | undefined;
   do {
     const resp = await client.send(
       new ScanCommand({ TableName: catalogTableName, ExclusiveStartKey: lastEvaluatedKey }),
     );
     for (const item of resp.Items ?? []) {
-      const row = unmarshall(item) as { id: string; title_normalized: string };
-      index.set(row.title_normalized, row.id);
+      const row = unmarshall(item) as { id: string; title: string; is_custom?: boolean };
+      // Recomputed from the title rather than read from `title_normalized`, so a normalization
+      // change takes effect here even before refresh-catalog has rewritten the stored keys.
+      const key = normalize(row.title);
+      const candidate = { id: row.id, isCustom: row.is_custom ?? false };
+      const current = best.get(key);
+      const better =
+        !current ||
+        (current.isCustom && !candidate.isCustom) ||
+        (current.isCustom === candidate.isCustom && candidate.id < current.id);
+      if (better) {
+        best.set(key, candidate);
+      }
     }
     lastEvaluatedKey = resp.LastEvaluatedKey;
   } while (lastEvaluatedKey);
-  return index;
+  return new Map([...best].map(([key, { id }]) => [key, id]));
 }
 
 async function main() {

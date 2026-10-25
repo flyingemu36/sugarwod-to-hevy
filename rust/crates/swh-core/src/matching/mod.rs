@@ -40,8 +40,12 @@ pub enum Resolution {
     Skip,
     Resolved {
         hevy_template_id: String,
-        /// Hevy's exercise `type` (e.g. `weight_reps`) — used by `load_calc`.
+        /// Whether this type normally carries an external load — drives the unlabeled-load
+        /// default in `load_calc`.
         is_loaded_type: bool,
+        /// Hevy's raw exercise `type` (e.g. `weight_reps`, `duration`), so `load_calc` can tell
+        /// which set fields the template is able to hold.
+        kind: String,
     },
     /// Neither an alias nor a direct catalog title match was found — reported, not dropped.
     Unmapped,
@@ -54,6 +58,10 @@ pub enum Resolution {
 pub struct MatchReport {
     pub unmapped: Vec<String>,
     pub load_unknown: Vec<String>,
+    /// Exercises that resolved, but to a template whose Hevy `type` can't hold part of what was
+    /// prescribed — formatted `"<name> (<fields> dropped)"`. These sync without error and would
+    /// otherwise be indistinguishable from a clean sync.
+    pub unsupported_fields: Vec<String>,
 }
 
 /// The full "Matching pipeline" from the plan, steps 1-5 end to end: parse `description`,
@@ -91,6 +99,13 @@ pub async fn build_routine_exercises(
                 let load_result = load_calc::compute_sets(&line.sets, &resolution, maxes).await?;
                 if load_result.load_unknown {
                     report.load_unknown.push(line.name_text.clone());
+                }
+                if !load_result.unsupported_fields.is_empty() {
+                    report.unsupported_fields.push(format!(
+                        "{} ({} dropped)",
+                        line.name_text,
+                        load_result.unsupported_fields.join("/")
+                    ));
                 }
                 let notes = line
                     .rpe_note

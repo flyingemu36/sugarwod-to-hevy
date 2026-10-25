@@ -30,10 +30,7 @@ impl DynamoAliasStore {
             if let Some(key) = last_key.clone() {
                 req = req.set_exclusive_start_key(Some(key));
             }
-            let resp = req
-                .send()
-                .await
-                .map_err(|e| SwhError::Dynamo(e.to_string()))?;
+            let resp = req.send().await.map_err(SwhError::dynamo)?;
             for item in resp.items.unwrap_or_default() {
                 if let Some(id) = item.get("hevy_template_id").and_then(|v| v.as_s().ok()) {
                     if !id.is_empty() {
@@ -60,7 +57,7 @@ impl AliasStore for DynamoAliasStore {
             .key("alias", AttributeValue::S(alias.to_string()))
             .send()
             .await
-            .map_err(|e| SwhError::Dynamo(e.to_string()))?;
+            .map_err(SwhError::dynamo)?;
 
         let Some(item) = resp.item else {
             return Ok(None);
@@ -98,7 +95,7 @@ impl AliasStore for DynamoAliasStore {
             .item("updated_at", AttributeValue::S(now))
             .send()
             .await
-            .map_err(|e| SwhError::Dynamo(e.to_string()))?;
+            .map_err(SwhError::dynamo)?;
         Ok(())
     }
 }

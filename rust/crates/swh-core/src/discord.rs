@@ -44,11 +44,20 @@ pub struct WorkoutOutcome {
     pub exercise_count: usize,
     pub unmapped: Vec<String>,
     pub load_unknown: Vec<String>,
+    /// Resolved exercises whose template type silently discards part of the prescription.
+    pub unsupported_fields: Vec<String>,
+    /// Set when this workout's sync errored. The other workouts in the run still sync and report;
+    /// one bad track used to abort the whole day.
+    pub error: Option<String>,
 }
 
 pub fn build_summary_message(outcomes: &[WorkoutOutcome]) -> String {
     let mut lines = Vec::new();
     for outcome in outcomes {
+        if let Some(error) = &outcome.error {
+            lines.push(format!("❌ **{}** — sync failed: {}", outcome.title, error));
+            continue;
+        }
         if outcome.exercise_count == 0 {
             // Skipped rather than synced — no exercise resolved, so no Hevy routine was written
             // (an empty routine would be rejected by Hevy). The unmapped list below shows what
@@ -77,6 +86,13 @@ pub fn build_summary_message(outcomes: &[WorkoutOutcome]) -> String {
                 outcome.load_unknown.join(", ")
             ));
         }
+        if !outcome.unsupported_fields.is_empty() {
+            lines.push(format!(
+                "   ⚠️ {} synced without part of their prescription (Hevy template type can't hold it): {}",
+                outcome.unsupported_fields.len(),
+                outcome.unsupported_fields.join(", ")
+            ));
+        }
     }
     lines.join("\n")
 }
@@ -96,6 +112,8 @@ mod tests {
             exercise_count: 9,
             unmapped: vec!["Weird Movement".to_string()],
             load_unknown: vec!["Alt DB Hang Snatch".to_string()],
+            unsupported_fields: vec![],
+            error: None,
         }];
         let msg = build_summary_message(&outcomes);
         assert!(msg.contains("HYROX"));
@@ -112,6 +130,8 @@ mod tests {
             exercise_count: 0,
             unmapped: vec!["DB Reverse Lunges".to_string()],
             load_unknown: vec![],
+            unsupported_fields: vec![],
+            error: None,
         }];
         let msg = build_summary_message(&outcomes);
         assert!(!msg.contains('✅'));
@@ -126,8 +146,36 @@ mod tests {
             exercise_count: 5,
             unmapped: vec![],
             load_unknown: vec![],
+            unsupported_fields: vec![],
+            error: None,
         }];
         let msg = build_summary_message(&outcomes);
         assert!(!msg.contains("⚠️"));
+    }
+
+    #[test]
+    fn a_failed_workout_is_reported_alongside_the_ones_that_synced() {
+        let outcomes = vec![
+            WorkoutOutcome {
+                title: "Fitness".to_string(),
+                exercise_count: 3,
+                unmapped: vec![],
+                load_unknown: vec![],
+                unsupported_fields: vec![],
+                error: None,
+            },
+            WorkoutOutcome {
+                title: "HYROX".to_string(),
+                exercise_count: 0,
+                unmapped: vec![],
+                load_unknown: vec![],
+                unsupported_fields: vec![],
+                error: Some("DynamoDB error: ValidationException".to_string()),
+            },
+        ];
+        let msg = build_summary_message(&outcomes);
+        assert!(msg.contains("✅ **Fitness** synced (3 exercises)"));
+        assert!(msg.contains("❌ **HYROX** — sync failed: DynamoDB error: ValidationException"));
+        assert!(!msg.contains("nothing synced"));
     }
 }

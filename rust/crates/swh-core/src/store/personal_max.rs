@@ -48,7 +48,7 @@ impl DynamoMaxStore {
             .item("updated_at", AttributeValue::S(now))
             .send()
             .await
-            .map_err(|e| SwhError::Dynamo(e.to_string()))?;
+            .map_err(SwhError::dynamo)?;
         Ok(())
     }
 }
@@ -66,7 +66,7 @@ impl MaxStore for DynamoMaxStore {
             )
             .send()
             .await
-            .map_err(|e| SwhError::Dynamo(e.to_string()))?;
+            .map_err(SwhError::dynamo)?;
 
         let Some(item) = resp.item else {
             return Ok(None);

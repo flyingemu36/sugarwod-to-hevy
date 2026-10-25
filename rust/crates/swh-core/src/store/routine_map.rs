@@ -23,7 +23,7 @@ impl RoutineMapStore {
             .key("routine_key", AttributeValue::S(routine_key.to_string()))
             .send()
             .await
-            .map_err(|e| SwhError::Dynamo(e.to_string()))?;
+            .map_err(SwhError::dynamo)?;
 
         Ok(resp.item.and_then(|item| {
             item.get("hevy_routine_id")
@@ -54,7 +54,7 @@ impl RoutineMapStore {
             .item("updated_at", AttributeValue::S(now))
             .send()
             .await
-            .map_err(|e| SwhError::Dynamo(e.to_string()))?;
+            .map_err(SwhError::dynamo)?;
         Ok(())
     }
 }
